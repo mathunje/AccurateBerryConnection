@@ -30,7 +30,7 @@ The directory *inputs* contains a zip with all input files for Quantum Espresso 
 - In case you want to combine two Wannierizations into a single one, use *combineW90Checkpoints.py*.
 - Call *calcTB.py* to compute the Berry connection for the different schemes. This script has the option to output human-readable *wannier_tb.dat* files as well.
 - The operator matrix elements can be visualized using *visualizeBZ.py*.
-- When the velocity matrix elements are available, you can compare the schemes via *velocityMismatch.py*, see Eq. (57) of the manuscript.
+- When the velocity matrix elements are available, you can compare the schemes via *velocityMismatch.py*, see Eq. (52) of the manuscript.
 - Calculation of dielectric constant (complex, Drude model) or optical conductivity (complex, Lorentz) can be performed using *calcEpsilon.py* and *calcSigma.py* and visualized using *visualizeEpsilon.py* and *visualizeSigma.py*.
 
 ## License

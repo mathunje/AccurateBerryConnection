@@ -1,5 +1,5 @@
 diff --git a/PP/src/pw2wannier90.f90 b/PP/src/pw2wannier90.f90
-index 86cb065db..9e748918c 100644
+index 86cb065db..98f4c072d 100644
 --- a/PP/src/pw2wannier90.f90
 +++ b/PP/src/pw2wannier90.f90
 @@ -692,6 +692,7 @@ PROGRAM pw2wannier90
@@ -79,13 +79,13 @@ index 86cb065db..9e748918c 100644
       CALL print_clock('write_parity')
       !
       WRITE(stdout, '(/5x, "Internal routines:")')
-@@ -6753,6 +6788,199 @@ SUBROUTINE write_band
+@@ -6753,6 +6788,312 @@ SUBROUTINE write_band
     !
  END SUBROUTINE write_band
  
 +SUBROUTINE write_momentum
 +   USE io_global,  ONLY : stdout, ionode
-+   USE constants,  ONLY : tpi, bohr => BOHR_RADIUS_ANGS
++   USE constants,  ONLY : tpi, bohr => BOHR_RADIUS_ANGS, rytoev
 +   USE mp,         ONLY : mp_barrier, mp_sum
 +   USE mp_world,   ONLY : world_comm
 +   USE mp_pools,   ONLY : me_pool, root_pool, my_pool_id, inter_pool_comm
@@ -151,8 +151,8 @@ index 86cb065db..9e748918c 100644
 +            IF (ibndA == ibndB) THEN
 +               p = p + xk(:, ik)
 +            ENDIF
-+            ! convert to cartesian coordinates (inverse Angstrom)
-+            p = p * tpiba / bohr
++            ! convert to cartesian coordinates (eV * Angstrom)
++            p = p * tpiba * rytoev
 +            IF (me_pool == root_pool) WRITE (iun_p,'(3I7,6(E20.12,1x))') ibndB1, ibndA1, ikevc_g, p(:)
 +         ENDDO
 +      ENDDO
@@ -167,9 +167,122 @@ index 86cb065db..9e748918c 100644
 +   !
 +END SUBROUTINE write_momentum
 +
++SUBROUTINE write_velocity_1
++   USE io_global,  ONLY : stdout, ionode
++   USE constants,  ONLY : bohr => BOHR_RADIUS_ANGS, rytoev
++   USE mp,         ONLY : mp_barrier, mp_sum
++   USE mp_world,   ONLY : world_comm
++   USE mp_pools,   ONLY : me_pool, root_pool, my_pool_id, inter_pool_comm
++   USE mp_bands,   ONLY : intra_bgrp_comm
++   USE io_files,   ONLY : nwordwfc, iunwfc
++   USE wvfct,      ONLY : nbnd, et, npwx
++   USE klist,      ONLY : nkstot, xk, ngk, igk_k, nks
++   USE lsda_mod,   ONLY : lsda, isk
++   USE uspp,       ONLY : nkb, vkb, okvan
++   USE becmod,     ONLY : bec_type, becp, calbec, &
++                          allocate_bec_type, deallocate_bec_type
++   USE cell_base,  ONLY : tpiba
++
++   USE lsda_mod,   ONLY : nspin, lsda, isk
++   USE wavefunctions, ONLY : evc
++   USE uspp_init,            ONLY : init_us_2
++   USE noncollin_module,     ONLY : noncolin, npol
++   USE ldaU,                 ONLY : lda_plus_u
++   USE wannier
++   !
++   IMPLICIT NONE
++   !
++   CHARACTER(LEN=256) :: filename
++   INTEGER :: ik, ibnd, jbnd, ibndA, ibndB, ibndA1, ibndB1, ikevc, ikevc_g, ierr
++
++   INTEGER :: ndim, npw, ipol, ig
++   REAL(DP) :: jet
++   COMPLEX(DP) :: v, vc(nbnd, nbnd, 3)
++   COMPLEX(DP), ALLOCATABLE :: ppsi(:,:), ppsi_us(:,:)
++   COMPLEX(DP) :: za, zb, zc
++   !
++   CHARACTER(LEN=6), EXTERNAL :: int_to_char
++   INTEGER, EXTERNAL :: global_kpoint_index
++   !
++   CALL start_clock( 'write_v' )
++
++   za = cmplx(1.d0,0.d0, kind=dp)
++   zb = cmplx(1.d0,0.d0, kind=dp)
++   zc = cmplx(0.d0,0.5d0,kind=dp)
++   !
++   IF (wan_mode == 'standalone') THEN
++      IF (me_pool == root_pool) THEN
++         filename = TRIM(seedname) // ".v"
++         IF (.NOT. ionode) filename = TRIM(filename) // TRIM(int_to_char(my_pool_id+1))
++         OPEN(NEWUNIT=iun_v, FILE=TRIM(filename), FORM='FORMATTED', STATUS='REPLACE')
++      ENDIF
++   ELSE
++      CALL errore('write_velocity', 'only wan_mode standalone implemented', 1)
++   ENDIF
++   IF (lda_plus_u) CALL errore('write_v', 'write_v not working with LDA+U',1)
++   !
++   CALL allocate_bec_type(nkb, nbnd, becp)
++   ALLOCATE(ppsi(npwx*npol,nbnd))
++   ALLOCATE(ppsi_us(npwx*npol,nbnd))
++   DO ik = 1, nks
++      CALL print_progress(ik, nks)
++      ikevc = ik - ikstart + 1
++      ikevc_g = global_kpoint_index(nkstot, ik) - ikstart + 1
++      npw = ngk(ik)
++      IF (noncolin) THEN
++          ndim = npwx * npol
++      ELSE
++          ndim = npw
++      ENDIF
++      CALL init_us_2 (npw, igk_k(1,ik), xk(1,ik), vkb)
++      CALL davcio (evc, 2*nwordwfc, iunwfc, ik, - 1)
++      CALL calbec (npw, vkb, evc, becp, nbnd)
++      vc = cmplx( 0._dp, 0._dp, kind = dp)
++      DO ipol=1, 3
++          CALL compute_ppsi(ppsi, ppsi_us, ik, ipol, nbnd, -1) ! spin_component=-1 as it is unused in this function
++          IF (okvan) THEN
++              CALL zgemm ('C','N', nbnd, nbnd, ndim, za, evc(1, 1), size(evc,1),  &
++                                                                    ppsi_us(1, 1), size(ppsi_us,1),      &
++                                                                    zb, vc(1, 1,ipol), nbnd)
++              DO jbnd = 1, nbnd
++                  jet = et(jbnd,ik)
++                  vc(:,jbnd, ipol)  = vc(:,jbnd, ipol) * zc * (et(:,ik) - jet)
++              ENDDO
++          ENDIF
++          CALL zgemm ('C','N', nbnd, nbnd, ndim, za, evc(1, 1), size(evc,1),     &
++                                                                ppsi(1, 1), size(ppsi,1),        &
++                                                                zb, vc(1, 1, ipol), nbnd)
++      ENDDO
++      CALL mp_sum(vc, intra_bgrp_comm)
++      ibndA1 = 0
++      DO ibndA = 1, nbnd
++         IF (excluded_band(ibndA)) CYCLE
++         ibndA1 = ibndA1 + 1
++         ibndB1 = 0
++         DO ibndB = 1, nbnd
++            IF (excluded_band(ibndB)) CYCLE
++            ibndB1 = ibndB1 + 1
++            ! write in converted units (eV * Angstrom)
++            IF (me_pool == root_pool) WRITE (iun_p,'(3I7,6(E20.12,1x))') ibndB1, ibndA1, ikevc_g, &
++               vc(ibndB, ibndA, :) * rytoev * ( bohr * 2 )
++         ENDDO
++      ENDDO
++   ENDDO
++   DEALLOCATE(ppsi)
++   DEALLOCATE(ppsi_us)
++   CALL deallocate_bec_type(becp)
++   IF (me_pool == root_pool) CLOSE(iun_v, STATUS="KEEP")
++   CALL mp_barrier(world_comm)
++   !
++   CALL utility_merge_files("v", .TRUE.)
++   !
++   CALL stop_clock( 'write_v' )
++   !
++END SUBROUTINE write_velocity_1
++
 +SUBROUTINE write_velocity
 +   USE io_global,  ONLY : stdout, ionode
-+   USE constants,  ONLY : bohr => BOHR_RADIUS_ANGS
++   USE constants,  ONLY : bohr => BOHR_RADIUS_ANGS, rytoev
 +   USE mp,         ONLY : mp_barrier, mp_sum
 +   USE mp_world,   ONLY : world_comm
 +   USE mp_pools,   ONLY : me_pool, root_pool, my_pool_id, inter_pool_comm
@@ -259,7 +372,7 @@ index 86cb065db..9e748918c 100644
 +            DO ibndB = 1, nbnd
 +               IF (excluded_band(ibndB)) CYCLE
 +               ibndB1 = ibndB1 + 1
-+               WRITE (iun_v,'(3I7,6(E20.12,1x))') ibndB1, ibndA1, ikevc_g, vc(ibndB, ibndA, :)
++               WRITE (iun_v,'(3I7,6(E20.12,1x))') ibndB1, ibndA1, ikevc_g, vc(ibndB, ibndA, :) * rytoev * bohr
 +            ENDDO
 +         ENDDO
 +      ENDIF

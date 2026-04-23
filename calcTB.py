@@ -382,7 +382,6 @@ def main(seedname, schemes, write_tb_dat):
     if not os.path.exists(fname):
         print(f"Generate {fname}")
         np.savez_compressed(fname, **parse_all([seedname]))
-        exit(0)
     data = np.load(fname)
     wc = WannierCalculator(**data)
 
