@@ -19,6 +19,7 @@ The scripts were developed using Python 3.
 - matplotlib 3.10.1
 - psutil 7.0.0
 - threadpoolctl 3.5.0
+
 You can also load a development shell using *nix*.
 
 ## Reproduction
@@ -28,7 +29,7 @@ The directory *inputs* contains a zip with all input files for Quantum Espresso 
 - Run a DFT calculation. For QE you can use the patched version of *pw2wannier90* with *write_v* and *write_p* in the input file to obtain the velocity matrix elements with and without correction due to the non-local pseudopotentials.
 - Run *wannier90*
 - In case you want to combine two Wannierizations into a single one, use *combineW90Checkpoints.py*.
-- Call *calcTB.py* to compute the Berry connection for the different schemes. This script has the option to output human-readable *wannier_tb.dat* files as well.
+- Call *calcTB.py* to compute the Berry connection for the different schemes. This script has the option to output human-readable *wannier_tb.dat* files as well, which can be alternatively written uing the  *write_tb.py* script.
 - The operator matrix elements can be visualized using *visualizeBZ.py*.
 - When the velocity matrix elements are available, you can compare the schemes via *velocityMismatch.py*, see Eq. (52) of the manuscript.
 - Calculation of dielectric constant (complex, Drude model) or optical conductivity (complex, Lorentz) can be performed using *calcEpsilon.py* and *calcSigma.py* and visualized using *visualizeEpsilon.py* and *visualizeSigma.py*.
