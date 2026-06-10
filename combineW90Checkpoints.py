@@ -210,10 +210,10 @@ def main(baseDir, seed):
     print(f"Merging {vbDir}, {cbDir} -> {fullDir}")
     if not os.path.exists(cbDir):
         print(f"{cbDir} does not exist")
-        continue
+        return
     if not os.path.exists(vbDir):
         print(f"{cbDir} does not exist")
-        continue
+        return
     dcb = loadCheckpoint(os.path.join(cbDir, seed))
     dvb = loadCheckpoint(os.path.join(vbDir, seed))
     mergeSeed = os.path.join(fullDir, seed)
