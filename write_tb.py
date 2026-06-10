@@ -46,7 +46,9 @@ def main(seedname, scheme, gap_eV, vbc, outfname, nodat, nonpz):
     
     if outfname is None:
         fname_dat = f"{seedname}_{scheme}_tb.dat"
+        fname_npz = f"{seedname}_{scheme}_tb.npz"
         if not (gap_eV is None):
+            fname_dat = f"{seedname}_gap_{gap_eV:.3f}eV_{scheme}_tb.dat"
             fname_npz = f"{seedname}_gap_{gap_eV:.3f}eV_{scheme}_tb.npz"
     else:
         fname_dat = outfname + "_tb.dat" 
