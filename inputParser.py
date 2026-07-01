@@ -72,17 +72,39 @@ def parse_mmn(fname):
                 G[kptf, n] = np.array([G0, G1, G2])
     return M, kIndex, G
 
-def parse_nnkp_lattice(fname):
+def parse_nnkp_lattice_rguide(fname):
     lines = open(fname, 'r').readlines()
-    for start, l in enumerate(lines):
-        if l.strip() == "begin real_lattice":
-            break
-    start += 1
-    for end in range(start, len(lines)):
-        if lines[end].strip() == "end real_lattice":
-            break
+    def findBlock(name):
+        for start, l in enumerate(lines):
+            if l.strip() == f"begin {name}":
+                break
+        start += 1
+        if start == len(lines):
+            return -1, -1
+        for end in range(start, len(lines)):
+            if lines[end].strip() == f"end {name}":
+                break
+        return start, end
+    start, end = findBlock("real_lattice")
     lattice = np.array([_parseToNp(float, l.strip()) for l in lines[start:end]])
-    return lattice
+    start, end = findBlock("projections")
+    if start < 0:
+        return lattice, np.empty([0, 3])
+    return lattice, np.array([_parseToNp(float, l.strip())[:3] for l in lines[start+1:end:2]])
+
+def parse_select_projections(fname, nProj):
+    print("Hello")
+    lines = open(fname, 'r').readlines()
+    sp = [ l.split("=")[1].strip() for l in lines if "select_projections" in l.split("=")[0]][0]
+    proj = np.zeros(nProj, dtype=bool)
+    for subStr in sp.split(","):
+        if "-" in subStr:
+            b, e = [int(i) for i in  subStr.split("-")]
+            proj[b-1:e] = True
+        else:
+            proj[int(subStr)-1] = True
+    return proj
+
 
 def parse_eig(fname):
     n, kpt, E = np.loadtxt(fname).T
@@ -96,7 +118,9 @@ def parse_all(seednames):
             kpts, U = parse_u_mat(seedname + "_u.mat")
             E = parse_eig(seedname + ".eig")
             M, kIndex, G = parse_mmn(seedname + ".mmn")
-            lattice = parse_nnkp_lattice(seedname + ".nnkp")
+            lattice, rguide = parse_nnkp_lattice_rguide(seedname + ".nnkp")
+            selectedProj = parse_select_projections(seedname + ".win", rguide.shape[0])
+            print(rguide.shape, selectedProj.shape)
             if os.path.exists(seedname + "_u_dis.mat"):
                 kvec, Udis = parse_u_mat(seedname + "_u_dis.mat")
                 uMat = Udis @ U
@@ -109,7 +133,7 @@ def parse_all(seednames):
         assert np.allclose(cM, M)
         assert np.allclose(ckIndex, kIndex)
         assert np.allclose(cG, G)
-        clattice = parse_nnkp_lattice(seedname + ".nnkp")
+        clattice, _ = parse_nnkp_lattice_rguide(seedname + ".nnkp")
         assert np.allclose(clattice, lattice)
         ckpts, cU = parse_u_mat(seedname + "_u.mat")
         if os.path.exists(seedname + "_u_dis.mat"):
@@ -160,7 +184,8 @@ def parse_all(seednames):
         Mw[k] = Mw[k, inverse_order]
         kIndex[k] = kIndex[k, inverse_order]
     res = { 'bvec' : bVec, 
-            'lattice' : atu.from_A(lattice), 
+            'lattice' : atu.from_A(lattice),
+            'rguide' : rguide[selectedProj],
             'H' : atu.from_eV(H.reshape((*nkd, *H.shape[1::])) ), 
             'M' : Mw.reshape( (*nkd, *Mw.shape[1::]) ) }
     for vn in ['v', 'p']:

@@ -34,6 +34,7 @@ def main(seedname, dimension, enforce_hermiticity, real_wf):
         dimension = 3
         while dimension>=0 and Nk[dimension-1] == 1:
             dimension -= 1
+    print(f"Comparing in {dimension}D")
     # expand to double-sized grid, which completely contains [H, A] in k-space (convolution)
     repeat_grid =  ( *((2,) *dimension), *((1,) *(3-dimension)) )
     Mks = ksi.k_grid(repeat=repeat_grid)

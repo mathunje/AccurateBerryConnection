@@ -17,18 +17,97 @@ import numpy as np
 import psutil
 import os
 import scipy
+
+
+from scipy.linalg._matfuncs_inv_ssq import _logm_triu as logm_triu
 from threadpoolctl import threadpool_limits
 
 import atu
 from inputParser import parse_all
 
+import itertools
+from scipy.cluster.hierarchy import DisjointSet
+
+import time
+
+def branchedLogm(A, brguide, blockEps=1e-3):
+    """ Computes matrix logarithm with guiding centers as described in paper.
+        Details from doi.org/10.1137/S0895479802410815
+    """
+    T, U = scipy.linalg.schur(A)
+    T_ii = np.diag(T)
+    blocks = DisjointSet(list(range(T_ii.size)))
+    for a in range(T_ii.size):
+        for b in range(a+1, T_ii.size):
+            if abs(T_ii[a] - T_ii[b]) < blockEps:
+                blocks.merge(a, b)
+    bindex = np.zeros(T_ii.shape)
+    for i, block in enumerate(blocks.subsets()):
+        bindex[list(block)] = i
+    # insertion sort of blocks
+    for i in range(1, T_ii.size):
+        j = i
+        while j > 0 and bindex[j-1] > bindex[j]:
+            # move eigenvalue inplace (fortran indexing)
+            scipy.linalg.lapack.ztrexc(T, U, j, j+1, 1, 1, 1)
+            bindex[[j-1, j]] = bindex[[j, j-1]]
+            j -= 1
+
+    # apply logm on diagonal containing blocks with intentionally selected branch
+    logT = np.zeros(T.shape, dtype=complex)
+    guidingRef = np.einsum("ba,b,ba->a", np.conj(U), -2j*np.pi * brguide, U)
+    start = 0
+    for cnt in np.unique(bindex, return_counts=True)[1]:
+        end = start + cnt
+        logT[start:end, start:end] = logm_triu(T[start:end, start:end])
+        off = np.imag(guidingRef[start:end] - np.diag(logT)[start:end] ) / (2*np.pi)
+        round_off = np.round(off)
+        assert np.allclose(round_off, round_off[0])
+        logT[start:end, start:end] += np.diag(np.round(off)) * 2j*np.pi
+        start = end
+    # fill remaining entries
+    for i in reversed(range(T_ii.size)):
+        for j in range(i+1, T_ii.size):
+            if blocks.connected(i, j):
+                continue
+            en = T[i,j] * (logT[i, i] - logT[j,j])
+            if j - i >= 2:
+                en += np.sum( logT[i, i+1:j] * T[i+1:j,j] - T[i,i+1:j]* logT[i+1:j,j] )
+            for k in range(i+1, j):T[i, j] - T[i, j] 
+            logT[i, j] = en / (T[i, i] - T[j, j])
+    # for testing uncomment: 
+    # print(np.linalg.norm(scipy.linalg.expm(logT)-T))
+    return np.einsum("ab,bc,dc->ad", U, logT, np.conj(U))
+
+
+def branchedLogmBatched(Abatch, brguide):
+    res = np.empty(Abatch.shape, dtype=complex)
+    #for i in range(Abatch.shape[0]):
+    #    res[i] = branchedLogm(Abatch[i], brguide[:, i])
+    for i in range(Abatch.shape[0]):
+        for j in range(Abatch.shape[1]):
+            res[i, j] = branchedLogm(Abatch[i, j], brguide[:, j])
+    return res
+
+
+def logM(M, brguide):
+    start = time.time()
+    coreCount = psutil.cpu_count(logical=False)
+    # res = [branchedLogmBatched(s, brguide) for s in M.reshape((-1, *M.shape[-3:]))]
+    with threadpool_limits(limits=1, user_api='openmp'):
+        with Pool(coreCount) as p:
+            res = p.starmap(branchedLogmBatched, [ (s, brguide) for s in np.array_split(M.reshape((-1, *M.shape[-3:])),
+                                                                                        coreCount)])
+    return np.concatenate(res, axis=0).reshape(M.shape)
+
 
 class WannierCalculator:
-    def __init__(self, H, M, lattice, bvec, **vMats):
+    def __init__(self, H, M, lattice, rguide, bvec, **vMats):
         self.H = H
         self.M = M
-        self.bvec = bvec
         self.lattice = lattice
+        self.rguide = rguide
+        self.bvec = bvec
         self.vMats = vMats
         self.recipLattice = 2*np.pi * np.linalg.inv(self.lattice).T
         self.nkd = self.M.shape[0:3]
@@ -36,6 +115,7 @@ class WannierCalculator:
         self.nw = self.M.shape[-1]
         self.ndegen = self.calcNdegen()
         self.wb = self.calcWeights(self.bvec)
+        self.brguide = self.rguide @ self.bvec.T
 
     def k_crys2cart(self, k):
         return k @ self.recipLattice
@@ -124,15 +204,27 @@ class WannierCalculator:
     # Interpolation schemes for Berry connection #
     #                                            #
     ##############################################
-    # The FFT here uses the opposite sign convension compared to the manuscript 
+    # The equation numbers refer to the manuscript 
     # "Self-consistent evaluation of the Berry connection for Wannier functions"
-    # to which the equations numbers refer to
-    #############################################
+    # arxiv.org/abs/2604.21660
+    ##############################################
+
+
+    def guided_brk_MV(self, Mii):
+        brk = np.log(Mii)
+        off = np.round(brk.imag / (2*np.pi) - self.brguide.T)
+        return brk - 2j * np.pi * off
+
+    def guided_r_SS(self, Mii):
+        br = np.log(np.sum(Mii, axis=(0,1,2)) / self.nk)
+        off = np.round(br.imag / (2*np.pi) - self.brguide.T)
+        br -= 2j * np.pi * off
+        return - np.einsum("b,ba,bm->ma", self.wb, self.k_crys2cart(self.bvec), br.imag)
 
     def calc_MV(self):
         Mmod = self.M.copy()
         # Eq. (25)
-        np.einsum("xyzsaa->xyzsa", Mmod)[:] = 1j * np.log(np.einsum("xyzsaa->xyzsa", Mmod)).imag
+        np.einsum("xyzsaa->xyzsa", Mmod)[:] = self.guided_brk_MV(np.einsum("xyzsaa->xyzsa", self.M))
         # Eq. (24)
         rk = 1j * np.einsum("b,ba,xyzbmn->xyzmna", self.wb, self.k_crys2cart(self.bvec), Mmod)
         rr = np.fft.fftn(rk, axes=(0, 1, 2), norm="forward")
@@ -144,7 +236,7 @@ class WannierCalculator:
     def calc_sym(self):
         Mmod = self.M.copy()
         # Eq. (25)
-        np.einsum("xyzsaa->xyzsa", Mmod)[:] = 1j * np.log(np.einsum("xyzsaa->xyzsa", Mmod)).imag
+        np.einsum("xyzsaa->xyzsa", Mmod)[:] = self.guided_brk_MV(np.einsum("xyzsaa->xyzsa", self.M))
         mmnR = np.fft.fftn(Mmod, axes=(0, 1, 2), norm="forward")
         rC = {}
         ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
@@ -156,10 +248,15 @@ class WannierCalculator:
 
     def calc_Lihm(self):
         # Eq. (27)
-        R0 = - np.einsum("b,ba,xyzbm->ma", self.wb, self.k_crys2cart(self.bvec), np.log(np.einsum("xyzsaa->xyzsa", self.M)).imag) / self.nk
+        R0 = self.guided_r_SS(np.einsum("xyzsaa->xyzsa", self.M))
+        # refinement according to eq.47 of arxiv.org/pdf/2604.22614
+        bvec_cart = self.k_crys2cart(self.bvec)
+        mkSum = np.einsum("xyzbaa->ba", self.M)
+        for i in range(3):
+            R0 -= np.einsum("b,ba,bm->ma", self.wb, bvec_cart, np.exp(1j * bvec_cart @ R0.T) *mkSum ).imag / self.nk
         mmnR = np.fft.fftn(self.M, axes=(0, 1, 2), norm="forward")
         rC = {}
-        ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
+        ba = np.einsum("a,ab->ab", self.wb, bvec_cart)
         Rfrac = R0 @ self.recipLattice.T / ( 2 * np.pi)
         RfracDiff = Rfrac[None, :, :] + Rfrac[:, None, :]
         for Rput, (Rorig, _) in self.ndegen.items():
@@ -173,10 +270,8 @@ class WannierCalculator:
     def calc_log(self):
         # Eq. (40)
         nb = self.bvec.shape[0]
-        with threadpool_limits(limits=1, user_api='openmp'):
-            with Pool(psutil.cpu_count(logical=False)) as p:
-                res = p.map(scipy.linalg.logm, [self.M.reshape(self.nk, nb, self.nw, self.nw)[i//nb, i%nb] for i in range(nb*self.nk)])
-        logMmn = np.array(res).reshape(self.M.shape)
+        
+        logMmn = logM(self.M, self.brguide)
         mmnR = np.fft.fftn(logMmn, axes=(0, 1, 2), norm="forward")
         rC = {}
         ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
@@ -188,11 +283,8 @@ class WannierCalculator:
     def calc_clog(self, maxIterations=20):
         # Eqs. (41) - (45)
         nb = self.bvec.shape[0]
-        nw = self.M.shape[-1]
-        with threadpool_limits(limits=1, user_api='openmp'):
-            with Pool(psutil.cpu_count(logical=False)) as p:
-                res = p.map(scipy.linalg.logm, [self.M.reshape(self.nk, nb, self.nw, self.nw)[i//nb, i%nb] for i in range(nb*self.nk)])
-        logMmn = np.array(res).reshape(self.M.shape)
+        nw = self.M.shape[-1] 
+        logMmn = logM(self.M, self.brguide)
         logMkb = logMmn
         bDk = logMkb
         phaseFac = np.zeros((*logMkb.shape[0:3], nb), dtype=complex)
@@ -225,6 +317,56 @@ class WannierCalculator:
             rC[*Rput] = 1j *  np.einsum("xs,xmn,x->mns", ba, Rb[*Rorig], np.exp(-1j * np.pi * phase))
         return rC
 
+    def calc_clogFull(self, maxIterations=20):
+        # Eqs. (41) - (45)
+        nb = self.bvec.shape[0]
+        nw = self.M.shape[-1]
+        bvec_cart = self.k_crys2cart(self.bvec)
+        ba = np.einsum("a,ab->ab", self.wb, bvec_cart)
+        logMkb = logM(self.M, self.brguide)
+
+        logMkb_cmp = 0.5*(logMkb-np.swapaxes(logMkb, -1, -2).conj())
+
+        phaseFac = np.zeros((*logMkb.shape[0:3], nb), dtype=complex)
+        phaseFac2 = np.zeros((*logMkb.shape[0:3], nb), dtype=complex)
+        for Rput, (Rorig, nc) in self.ndegen.items():
+            phaseFac[Rorig] += np.exp(-1j * np.pi * self.bvec @ Rput) / nc
+            phaseFac2[Rorig] += np.exp(2j * np.pi * self.bvec @ Rput) / nc
+
+        def evalMagnus(AR):
+            ARb = np.einsum("abcsmn,xs->abcxmn", AR, bvec_cart)
+            # 1: bA^k | 2: bA^{k+b/2} | 3: bA^{k+b}
+            bA1 = np.fft.ifftn(ARb, axes=(0, 1, 2), norm="forward")
+            bA2 = np.fft.ifftn(np.einsum("abcxmn,abcx->abcxmn", ARb, np.conj(phaseFac)), axes=(0, 1, 2), norm="forward")
+            bA3 = np.fft.ifftn(np.einsum("abcxmn,abcx->abcxmn", ARb, phaseFac2), axes=(0, 1, 2), norm="forward")
+            return (bA1 + 4 * bA2 + bA3) / 6 - (bA1 @ bA3 - bA3 @ bA1 ) / 12
+
+        bDk = logMkb
+        AR = np.einsum("xs,abcxmn,abcx->abcsmn", ba, np.fft.fftn(bDk, axes=(0, 1, 2), norm='forward'), phaseFac)
+        Ikb = evalMagnus(AR)
+        error = np.linalg.norm(Ikb-logMkb_cmp)
+        it = 0
+        while it < maxIterations:
+            print(f"\titeration {it}: error={error}")
+            bDk_new = bDk - Ikb + logMkb
+            AR = np.einsum("xs,abcxmn,abcx->abcsmn", ba, np.fft.fftn(bDk_new, axes=(0, 1, 2), norm='forward'), phaseFac)
+            Ikb = evalMagnus(AR)
+            newError = np.linalg.norm(Ikb - logMkb_cmp)
+            if newError > error:
+                print(f"Break as increased error was observed: {newError}")
+                bDk = bDk_new
+                break
+            else:
+                error = newError
+                bDk = bDk_new
+                it += 1
+        Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
+        rC = {}
+        for Rput, (Rorig, _) in self.ndegen.items():
+            phase = self.bvec @ Rput
+            rC[*Rput] = 1j *  np.einsum("xs,xmn,x->mns", ba, Rb[*Rorig], np.exp(-1j * np.pi * phase))
+        return rC
+
     def calc_altLog(self):
         # Eq. (B1)
         nb = self.bvec.shape[0]
@@ -239,11 +381,7 @@ class WannierCalculator:
         for bi in range(nb):
             o = np.round(offsets[bi]).astype(int)
             mmnShifted[:, :, :, bi] = np.roll(mmnFine[:, :, :, bi], o, axis=(0, 1, 2))[::2,::2,::2]
-
-        with threadpool_limits(limits=1, user_api='openmp'):
-            with Pool(psutil.cpu_count(logical=False)) as p:
-                res = p.map(scipy.linalg.logm, [mmnShifted.reshape(self.nk, nb, self.nw, self.nw)[i//nb, i%nb] for i in range(nb*self.nk)])
-        logMmn = np.array(res).reshape(s)
+        logMmn = logM(mmnShifted, self.brguide)
         rk = 1j * np.einsum("b,ba,xyzbmn->xyzmna", self.wb, self.k_crys2cart(self.bvec), logMmn)
         rr = np.fft.fftn(rk, axes=(0, 1, 2), norm="forward")
         rC = {}
@@ -270,10 +408,7 @@ class WannierCalculator:
         for bi in range(nb):
             o = np.round(offsets[bi]).astype(int)
             mmnShifted[:, :, :, bi] = np.roll(mmnFine[:, :, :, bi], o, axis=(0, 1, 2))[::2,::2,::2]
-        with threadpool_limits(limits=1, user_api='openmp'):
-            with Pool(psutil.cpu_count(logical=False)) as p:
-                res = p.map(scipy.linalg.logm, [mmnShifted.reshape(self.nk, nb, self.nw, self.nw)[i//nb, i%nb] for i in range(nb*self.nk)])
-        logMmn = np.array(res).reshape(s)
+        logMmn = logM(mmnShifted, self.brguide)
         logMkb = logMmn
         ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
         bLength = np.linalg.norm(ba, axis=1)
@@ -308,10 +443,7 @@ class WannierCalculator:
         # Eqs. (41)-(45) however with 6th-order Magnus expansion
         nb = self.bvec.shape[0]
         nw = self.M.shape[-1]
-        with threadpool_limits(limits=1, user_api='openmp'):
-            with Pool(psutil.cpu_count(logical=False)) as p:
-                res = p.map(scipy.linalg.logm, [self.M.reshape(self.nk, nb, self.nw, self.nw)[i//nb, i%nb] for i in range(nb*self.nk)])
-        logMkb = np.array(res).reshape(self.M.shape)
+        logMkb = logM(self.M, self.brguide)
         bDk = logMkb
         error = np.linalg.norm(0.5*(bDk-np.swapaxes(bDk, -1, -2).conj())-logMkb)
         it = 0
