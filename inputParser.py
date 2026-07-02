@@ -93,7 +93,6 @@ def parse_nnkp_lattice_rguide(fname):
     return lattice, np.array([_parseToNp(float, l.strip())[:3] for l in lines[start+1:end:2]])
 
 def parse_select_projections(fname, nProj):
-    print("Hello")
     lines = open(fname, 'r').readlines()
     sp = [ l.split("=")[1].strip() for l in lines if "select_projections" in l.split("=")[0]][0]
     proj = np.zeros(nProj, dtype=bool)
@@ -120,7 +119,6 @@ def parse_all(seednames):
             M, kIndex, G = parse_mmn(seedname + ".mmn")
             lattice, rguide = parse_nnkp_lattice_rguide(seedname + ".nnkp")
             selectedProj = parse_select_projections(seedname + ".win", rguide.shape[0])
-            print(rguide.shape, selectedProj.shape)
             if os.path.exists(seedname + "_u_dis.mat"):
                 kvec, Udis = parse_u_mat(seedname + "_u_dis.mat")
                 uMat = Udis @ U

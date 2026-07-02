@@ -28,7 +28,6 @@ from inputParser import parse_all
 import itertools
 from scipy.cluster.hierarchy import DisjointSet
 
-import time
 
 def branchedLogm(A, brguide, blockEps=1e-3):
     """ Computes matrix logarithm with guiding centers as described in paper.
@@ -52,7 +51,6 @@ def branchedLogm(A, brguide, blockEps=1e-3):
             scipy.linalg.lapack.ztrexc(T, U, j, j+1, 1, 1, 1)
             bindex[[j-1, j]] = bindex[[j, j-1]]
             j -= 1
-
     # apply logm on diagonal containing blocks with intentionally selected branch
     logT = np.zeros(T.shape, dtype=complex)
     guidingRef = np.einsum("ba,b,ba->a", np.conj(U), -2j*np.pi * brguide, U)
@@ -62,8 +60,11 @@ def branchedLogm(A, brguide, blockEps=1e-3):
         logT[start:end, start:end] = logm_triu(T[start:end, start:end])
         off = np.imag(guidingRef[start:end] - np.diag(logT)[start:end] ) / (2*np.pi)
         round_off = np.round(off)
-        assert np.allclose(round_off, round_off[0])
-        logT[start:end, start:end] += np.diag(np.round(off)) * 2j*np.pi
+        if  np.allclose(round_off, round_off[0]):
+            logT[start:end, start:end] += np.diag(round_off) * 2j*np.pi
+        else:
+            # different branches are only expected for phases +/pi
+            logT[start:end, start:end] = logm_triu(-T[start:end,start:end]) + 1j*np.pi * np.identity(end-start)
         start = end
     # fill remaining entries
     for i in reversed(range(T_ii.size)):
@@ -73,7 +74,6 @@ def branchedLogm(A, brguide, blockEps=1e-3):
             en = T[i,j] * (logT[i, i] - logT[j,j])
             if j - i >= 2:
                 en += np.sum( logT[i, i+1:j] * T[i+1:j,j] - T[i,i+1:j]* logT[i+1:j,j] )
-            for k in range(i+1, j):T[i, j] - T[i, j] 
             logT[i, j] = en / (T[i, i] - T[j, j])
     # for testing uncomment: 
     # print(np.linalg.norm(scipy.linalg.expm(logT)-T))
@@ -91,7 +91,6 @@ def branchedLogmBatched(Abatch, brguide):
 
 
 def logM(M, brguide):
-    start = time.time()
     coreCount = psutil.cpu_count(logical=False)
     # res = [branchedLogmBatched(s, brguide) for s in M.reshape((-1, *M.shape[-3:]))]
     with threadpool_limits(limits=1, user_api='openmp'):
@@ -251,9 +250,9 @@ class WannierCalculator:
         R0 = self.guided_r_SS(np.einsum("xyzsaa->xyzsa", self.M))
         # refinement according to eq.47 of arxiv.org/pdf/2604.22614
         bvec_cart = self.k_crys2cart(self.bvec)
-        mkSum = np.einsum("xyzbaa->ba", self.M)
-        for i in range(3):
-            R0 -= np.einsum("b,ba,bm->ma", self.wb, bvec_cart, np.exp(1j * bvec_cart @ R0.T) *mkSum ).imag / self.nk
+        mkSum = np.einsum("baa->ba", np.sum(self.M, axis=(0,1,2)))
+        #for i in range(3):
+        #    R0 -= np.einsum("b,ba,bm->ma", self.wb, bvec_cart, np.exp(1j * bvec_cart @ R0.T) *mkSum ).imag / self.nk
         mmnR = np.fft.fftn(self.M, axes=(0, 1, 2), norm="forward")
         rC = {}
         ba = np.einsum("a,ab->ab", self.wb, bvec_cart)
