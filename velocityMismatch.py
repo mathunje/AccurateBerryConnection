@@ -82,7 +82,7 @@ def main(seedname, dimension, enforce_hermiticity, dis_froz_min, dis_froz_max, r
     for mm, nrm, k1 in zip(mismatch, norm, keys):
         line = f"{k1:{kl+1}}| {nrm/(gsSize)**0.5:<{kl}f}"
         for m in mm:
-            line += f"  {m:<{kl}f}"
+            line += f" {m:<{kl}f}"
         print(line)
 
 

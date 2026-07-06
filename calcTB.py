@@ -60,11 +60,13 @@ def branchedLogm(A, brguide, blockEps=1e-3):
         logT[start:end, start:end] = logm_triu(T[start:end, start:end])
         off = np.imag(guidingRef[start:end] - np.diag(logT)[start:end] ) / (2*np.pi)
         round_off = np.round(off)
-        if  np.allclose(round_off, round_off[0]):
-            logT[start:end, start:end] += np.diag(round_off) * 2j*np.pi
-        else:
-            # different branches are only expected for phases +/pi
+        if not np.allclose(round_off, round_off[0]):
+            # different branches are only expected for phases +/- pi thus rotate matrix by pi to force same branches
             logT[start:end, start:end] = logm_triu(-T[start:end,start:end]) + 1j*np.pi * np.identity(end-start)
+            off = np.imag(guidingRef[start:end] - np.diag(logT)[start:end] ) / (2*np.pi)
+            round_off = np.round(off)
+            assert np.allclose(round_off, round_off[0])
+        logT[start:end, start:end] += np.diag(round_off) * 2j*np.pi
         start = end
     # fill remaining entries
     for i in reversed(range(T_ii.size)):

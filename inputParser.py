@@ -7,6 +7,7 @@ of the different schemes.
 
 import numpy as np
 import os
+import re
 import sys
 
 import atu
@@ -94,11 +95,17 @@ def parse_nnkp_lattice_rguide(fname):
 
 def parse_select_projections(fname, nProj):
     lines = open(fname, 'r').readlines()
-    sp = [ l.split("=")[1].strip() for l in lines if "select_projections" in l.split("=")[0]][0]
+    lines = [ l.split("#", 1)[0] for l in  lines]
+    spKey = "select_projections"
+    sp = [ l.partition(spKey)[2].strip() for l in lines if spKey in l][0]
+    if sp[0] == "=":
+        sp = sp[1:]
     proj = np.zeros(nProj, dtype=bool)
-    for subStr in sp.split(","):
+    for subStr in re.split(",| ", sp):
+        if len(subStr) == 0:
+            continue
         if "-" in subStr:
-            b, e = [int(i) for i in  subStr.split("-")]
+            b, e = [int(i) for i in subStr.split("-")]
             proj[b-1:e] = True
         else:
             proj[int(subStr)-1] = True
