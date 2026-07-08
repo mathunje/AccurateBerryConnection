@@ -5,6 +5,7 @@ The velocity matrix file is optional and enables quantitative comparisson
 of the different schemes.
 """
 
+import argparse
 import numpy as np
 import os
 import re
@@ -20,18 +21,20 @@ def _parseToCmplx(s):
     return r + 1j*i
 
 
-def parse_u_mat(fname):
+def parse_u_mat(fname, bandIndexOffset=0):
     with open(fname, "r") as f:
         f.readline() # header
         Nk, Nw, Nb = _parseToNp(int, f.readline())
-        Udis = np.empty((Nk, Nw, Nb), dtype=complex)
+        Udis = np.zeros((Nk, Nw, Nb), dtype=complex)
         kvec = np.empty((Nk, 3), dtype=float)
         for n in range(Nk):
             f.readline() # empty line
             kvec[n] = _parseToNp(float, f.readline())
             for i in range(Nw):
                 for j in range(Nb):
-                    Udis[n, i, j] = _parseToCmplx(f.readline())
+                    v =  _parseToCmplx(f.readline())
+                    if j + bandIndexOffset < Nb:
+                        Udis[n, i, j + bandIndexOffset] = v
     # restore unitarity as best as possible (reduce truncation error of input)
     u, s, vh = np.linalg.svd(Udis, full_matrices=False)
     return kvec, np.swapaxes(u @ vh, 1, 2)
@@ -118,7 +121,7 @@ def parse_eig(fname):
     return E
 
 
-def parse_all(seednames):
+def parse_all(seednames, bandIndexOffset=0):
     for i, seedname in enumerate(seednames):
         if i == 0:
             kpts, U = parse_u_mat(seedname + "_u.mat")
@@ -127,7 +130,7 @@ def parse_all(seednames):
             lattice, rguide = parse_nnkp_lattice_rguide(seedname + ".nnkp")
             selectedProj = parse_select_projections(seedname + ".win", rguide.shape[0])
             if os.path.exists(seedname + "_u_dis.mat"):
-                kvec, Udis = parse_u_mat(seedname + "_u_dis.mat")
+                kvec, Udis = parse_u_mat(seedname + "_u_dis.mat", bandIndexOffset)
                 uMat = Udis @ U
             else:
                 uMat = U
@@ -142,7 +145,7 @@ def parse_all(seednames):
         assert np.allclose(clattice, lattice)
         ckpts, cU = parse_u_mat(seedname + "_u.mat")
         if os.path.exists(seedname + "_u_dis.mat"):
-            ckvec, cUdis = parse_u_mat(seedname + "_u_dis.mat")
+            ckvec, cUdis = parse_u_mat(seedname + "_u_dis.mat", bandIndexOffset)
             assert np.linalg.norm( np.einsum("kab,kac->kbc", Udis, np.conj(cUdis)) ) < 1e-10
             cuMat = cUdis @ cU
         else:
@@ -201,7 +204,7 @@ def parse_all(seednames):
     return res
 
 
-if __name__ == "__main__":
+if __name__ == "__main__2":
     if len(sys.argv) == 1:
         print(f"Usage: {sys.argv[0]} seedname [outfile.npz]")
         print(f"       {sys.argv[0]} seedname1 [seedname2] ... seednameN outfile.npz")
@@ -217,3 +220,19 @@ if __name__ == "__main__":
         gridDict = parse_all(sys.argv[1:-1:])
         np.savez_compressed(sys.argv[-1] + ".npz", **gridDict)
 
+def createParser():
+    parser = argparse.ArgumentParser(
+                        description="""Parses wannier90 input and output files required to compute the Berry connection""",
+                        epilog="from MT")
+    parser.add_argument('-bio', '--bandIndexOffset',
+                        help='offset (number) of indcies used to write the disentanglement matrix (see issue 608 of Wannier90)',
+                        type=int, default=0)
+    parser.add_argument('seednames', help='seedname (reads seedname.npz)', nargs='+')
+    return parser
+
+
+if __name__ == "__main__":
+    parser = createParser()
+    args = parser.parse_args()
+    gridDict = parse_all(**vars(args))
+    np.savez_compressed(sys.argv[-1] + ".npz", **gridDict)
