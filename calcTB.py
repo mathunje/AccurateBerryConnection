@@ -300,8 +300,10 @@ class WannierCalculator:
             bDk2 = bDk
             bDk3 = np.fft.ifftn(np.einsum("xyzbmn,xyzb->xyzbmn", Rb, np.conj(phaseFac)), axes=(0, 1, 2), norm="forward")
             # Magnus expansion of 4th order of path ordered integral - Eq. (42)
+            # Eq. (256) of doi.org/10.1016/j.physrep.2008.11.001
             omegaDkb = 1/6 * (bDk1 + 4 * bDk2 + bDk3) - (bDk1 @ bDk3 - bDk3 @ bDk1 ) / 12
             bDk = bDk - omegaDkb + logMkb
+            # bDk = 2 * bDk - omegaDkb
             newError = np.linalg.norm(omegaDkb - logMkb)
             if newError > error:
                 print(newError)
@@ -440,7 +442,7 @@ class WannierCalculator:
             rC[*Rput] = 1j * np.einsum("xs,xmn->mns", ba, Rb[*Rorig])
         return rC
 
-    def calc_clog6(self, maxIterations=20):
+    def calc_clog_deriv6(self, maxIterations=20):
         # Eqs. (41)-(45) however with 6th-order Magnus expansion
         nb = self.bvec.shape[0]
         nw = self.M.shape[-1]
@@ -472,6 +474,53 @@ class WannierCalculator:
             if newError > error:
                 print(newError)
                 bDk = bDkOld
+                break
+            else:
+                error = newError
+                it += 1
+        Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
+        rC = {}
+        ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
+        for Rput, (Rorig, _) in self.ndegen.items():
+            phase = self.bvec @ Rput
+            rC[*Rput] = 1j *  np.einsum("xs,xmn,x->mns", ba, Rb[*Rorig], np.exp(-1j * np.pi * phase))
+        return rC
+
+    def calc_clog6(self, maxIterations=20):
+        # Eqs. (41)-(45) however with 6th-order Magnus expansion
+        # Eq. (257) of doi.org/10.1016/j.physrep.2008.11.001
+        s15 = np.sqrt(15)
+        commute = lambda A, B : A @ B - B @ A
+        nb = self.bvec.shape[0]
+        nw = self.M.shape[-1]
+        logMkb = logM(self.M, self.brguide)
+        phaseFac = np.zeros((*logMkb.shape[0:3], nb), dtype=complex)
+        for Rput, (Rorig, nc) in self.ndegen.items():
+            phaseFac[Rorig] += np.exp(2j * np.pi * s15/10 * self.bvec @ Rput) / nc
+        bDk = logMkb
+        error = np.linalg.norm(0.5*(bDk-np.swapaxes(bDk, -1, -2).conj())-logMkb)
+        it = 0
+        while it < maxIterations:
+            print(f"\titeration {it}: error={error}")
+            Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
+            A1 = np.fft.ifftn(np.einsum("xyzbmn,xyzb->xyzbmn", Rb, phaseFac), axes=(0, 1, 2), norm="forward")
+            A2 = bDk
+            A3 = np.fft.ifftn(np.einsum("xyzbmn,xyzb->xyzbmn", Rb, np.conj(phaseFac)), axes=(0, 1, 2), norm="forward")
+
+            al1 = A2
+            al2 = s15/3 * (A3 - A1)
+            al3 = 10/3. * (A3 - 2* A2 + A1)
+
+            C1 = commute(al1, al2)
+            C2 = -1/60. * commute(al1, 2*al3 + C1)
+            C3 = commute(-20*al1 - al3 + C1, al2 + C2)
+
+            Ik = al1 + 1/12. * al3 + 1/240. * C3
+            bDk = bDk - (Ik - logMkb)
+            newError = np.linalg.norm(Ik - logMkb)
+            if newError > error:
+                print(newError)
+                bDk = bDk + (Ik - logMkb)
                 break
             else:
                 error = newError
