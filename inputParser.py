@@ -100,8 +100,11 @@ def parse_select_projections(fname, nProj):
     lines = open(fname, 'r').readlines()
     lines = [ l.split("#", 1)[0] for l in  lines]
     spKey = "select_projections"
-    sp = [ l.partition(spKey)[2].strip() for l in lines if spKey in l][0]
-    if sp[0] == "=":
+    sp = [ l.partition(spKey)[2].strip() for l in lines if spKey in l]
+    if len(sp) == 0:
+        return np.ones(nProj, dtype=bool)
+    sp = sp[0]
+    if sp[0] == "=" or sp[0] == ":":
         sp = sp[1:]
     proj = np.zeros(nProj, dtype=bool)
     for subStr in re.split(",| ", sp):
@@ -191,9 +194,13 @@ def parse_all(seednames, bandIndexOffset=0):
         inverse_order = np.argsort(aligned_bvec_order)
         Mw[k] = Mw[k, inverse_order]
         kIndex[k] = kIndex[k, inverse_order]
+    if rguide.size == 0 or rguide.shape[0] != H.shape[-1]:
+        rguide = np.zeros((H.shape[-1] , 3), dtype=float)
+    else:
+        rguide = rguide[selectedProj]
     res = { 'bvec' : bVec, 
             'lattice' : atu.from_A(lattice),
-            'rguide' : rguide[selectedProj],
+            'rguide' : rguide,
             'H' : atu.from_eV(H.reshape((*nkd, *H.shape[1::])) ), 
             'M' : Mw.reshape( (*nkd, *Mw.shape[1::]) ) }
     for vn in ['v', 'p']:
