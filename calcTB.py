@@ -253,8 +253,8 @@ class WannierCalculator:
         # refinement according to eq.47 of arxiv.org/pdf/2604.22614
         bvec_cart = self.k_crys2cart(self.bvec)
         mkSum = np.einsum("baa->ba", np.sum(self.M, axis=(0,1,2)))
-        #for i in range(3):
-        #    R0 -= np.einsum("b,ba,bm->ma", self.wb, bvec_cart, np.exp(1j * bvec_cart @ R0.T) *mkSum ).imag / self.nk
+        for i in range(5):
+            R0 -= np.einsum("b,ba,bm->ma", self.wb, bvec_cart, np.exp(1j * bvec_cart @ R0.T) *mkSum ).imag / self.nk
         mmnR = np.fft.fftn(self.M, axes=(0, 1, 2), norm="forward")
         rC = {}
         ba = np.einsum("a,ab->ab", self.wb, bvec_cart)
@@ -288,13 +288,14 @@ class WannierCalculator:
         logMmn = logM(self.M, self.brguide)
         logMkb = logMmn
         bDk = logMkb
+        # print( 0.5 * np.linalg.norm(bDk + np.swapaxes(bDk, -1, -2) ) / np.prod(bDk.shape[0:-2]))
         phaseFac = np.zeros((*logMkb.shape[0:3], nb), dtype=complex)
         for Rput, (Rorig, nc) in self.ndegen.items():
             phaseFac[Rorig] += np.exp(1j * np.pi * self.bvec @ Rput) / nc
         error = np.linalg.norm(0.5*(bDk-np.swapaxes(bDk, -1, -2).conj())-logMkb)
         it = 0
+        print(f"\titeration {it}: error={error}")
         while it < maxIterations:
-            print(f"\titeration {it}: error={error}")
             Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
             bDk1 = np.fft.ifftn(np.einsum("xyzbmn,xyzb->xyzbmn", Rb, phaseFac), axes=(0, 1, 2), norm="forward")
             bDk2 = bDk
@@ -309,9 +310,9 @@ class WannierCalculator:
                 print(newError)
                 bDk = bDk2
                 break
-            else:
-                error = newError
-                it += 1
+            error = newError
+            it += 1
+            print(f"\titeration {it}: error={error}")
         Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
         rC = {}
         ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
@@ -349,8 +350,8 @@ class WannierCalculator:
         Ikb = evalMagnus(AR)
         error = np.linalg.norm(Ikb-logMkb_cmp)
         it = 0
+        print(f"\titeration {it}: error={error}")
         while it < maxIterations:
-            print(f"\titeration {it}: error={error}")
             bDk_new = bDk - Ikb + logMkb
             AR = np.einsum("xs,abcxmn,abcx->abcsmn", ba, np.fft.fftn(bDk_new, axes=(0, 1, 2), norm='forward'), phaseFac)
             Ikb = evalMagnus(AR)
@@ -359,10 +360,10 @@ class WannierCalculator:
                 print(f"Break as increased error was observed: {newError}")
                 bDk = bDk_new
                 break
-            else:
-                error = newError
-                bDk = bDk_new
-                it += 1
+            error = newError
+            bDk = bDk_new
+            it += 1
+            print(f"\titeration {it}: error={error}")
         Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
         rC = {}
         for Rput, (Rorig, _) in self.ndegen.items():
@@ -418,8 +419,8 @@ class WannierCalculator:
         bDk = logMkb
         error = np.linalg.norm(0.5*(bDk-np.swapaxes(bDk, -1, -2).conj())-logMkb)
         it = 0
+        print(f"\titeration {it}: error={error}")
         while it < maxIterations:
-            print(f"\titeration {it}: error={error}")
             Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
             bDk1 = np.fft.ifftn(np.einsum("xyzbmn,xyzb->xyzbmn", Rb, phaseFac), axes=(0, 1, 2), norm="forward")
             bDk2 = bDk
@@ -432,9 +433,9 @@ class WannierCalculator:
                 print(newError)
                 bDk = bDk2
                 break
-            else:
-                error = newError
-                it += 1
+            error = newError
+            it += 1
+            print(f"\titeration {it}: error={error}")
         Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
         rC = {}
         ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
@@ -450,8 +451,8 @@ class WannierCalculator:
         bDk = logMkb
         error = np.linalg.norm(0.5*(bDk-np.swapaxes(bDk, -1, -2).conj())-logMkb)
         it = 0
+        print(f"\titeration {it}: error={error}")
         while it < maxIterations:
-            print(f"\titeration {it}: error={error}")
             # Magnus expansion of 6th order of path ordered integral
             # (Blanes, Sergio, and Per Christian Moan.
             # "Fourth-and sixth-order commutator-free Magnus integrators for linear and non-linear dynamical systems." 
@@ -475,9 +476,9 @@ class WannierCalculator:
                 print(newError)
                 bDk = bDkOld
                 break
-            else:
-                error = newError
-                it += 1
+            error = newError
+            it += 1
+            print(f"\titeration {it}: error={error}")
         Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
         rC = {}
         ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
@@ -500,8 +501,8 @@ class WannierCalculator:
         bDk = logMkb
         error = np.linalg.norm(0.5*(bDk-np.swapaxes(bDk, -1, -2).conj())-logMkb)
         it = 0
+        print(f"\titeration {it}: error={error}")
         while it < maxIterations:
-            print(f"\titeration {it}: error={error}")
             Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
             A1 = np.fft.ifftn(np.einsum("xyzbmn,xyzb->xyzbmn", Rb, phaseFac), axes=(0, 1, 2), norm="forward")
             A2 = bDk
@@ -522,9 +523,9 @@ class WannierCalculator:
                 print(newError)
                 bDk = bDk + (Ik - logMkb)
                 break
-            else:
-                error = newError
-                it += 1
+            error = newError
+            it += 1
+            print(f"\titeration {it}: error={error}")
         Rb = np.fft.fftn(bDk, axes=(0, 1, 2), norm="forward")
         rC = {}
         ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
