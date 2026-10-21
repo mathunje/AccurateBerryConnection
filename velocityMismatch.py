@@ -113,9 +113,9 @@ def main(seedname, dimension, enforce_hermiticity, dis_froz_min, dis_froz_max, r
     mvIndex = keys.index("v")
     gsSize = np.prod( np.array(repeat_grid) * ksi.rMats['H'].shape[0:3])
 
-    header = " " * kl + " | norm" + " " * (kl-3)
+    header = " " * kl + " | norm" + " " * (kl-4)
     for k in keys:
-        header += f" {k:{kl+1}}"
+        header += f" {k:{kl}}"
     print(header)
     for n, nd, k1 in zip(norm, normDiff, keys):
         line = f"{k1:{kl+1}}| {n/(gsSize)**0.5:<{kl}f}"

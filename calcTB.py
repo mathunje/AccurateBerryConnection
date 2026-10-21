@@ -278,14 +278,20 @@ class WannierCalculator:
         ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
         for Rput, (Rorig, _) in self.ndegen.items():
             phase = self.bvec @ Rput
-            rC[*Rput] = 1j *  np.einsum("xs,xmn,x->mns", ba, mmnR[*Rorig], np.exp(-1j * np.pi * phase))
+            rC[*Rput] = 1j * np.einsum("xs,xmn,x->mns", ba, mmnR[*Rorig], np.exp(-1j * np.pi * phase))
         return rC
 
-    def calc_clog(self, maxIterations=20):
+    def _calc_clog(self, maxIterations=20, normalized=True):
         # Eqs. (41) - (45)
         nb = self.bvec.shape[0]
         nw = self.M.shape[-1] 
-        logMmn = logM(self.M, self.brguide)
+        if normalized:
+            R0 = self.guided_r_SS(np.einsum("xyzsaa->xyzsa", self.M))
+            bR0 = R0 @ self.k_crys2cart(self.bvec).T
+            normM = np.einsum("xyzsab,bs->xyzsab", self.M, np.exp(1j *bR0))
+            logMmn = logM(normM, self.brguide - bR0 / (2*np.pi))
+        else:
+            logMmn = logM(self.M, self.brguide)
         logMkb = logMmn
         bDk = logMkb
         # print( 0.5 * np.linalg.norm(bDk + np.swapaxes(bDk, -1, -2) ) / np.prod(bDk.shape[0:-2]))
@@ -318,8 +324,16 @@ class WannierCalculator:
         ba = np.einsum("a,ab->ab", self.wb, self.k_crys2cart(self.bvec))
         for Rput, (Rorig, _) in self.ndegen.items():
             phase = self.bvec @ Rput
-            rC[*Rput] = 1j *  np.einsum("xs,xmn,x->mns", ba, Rb[*Rorig], np.exp(-1j * np.pi * phase))
+            rC[*Rput] = 1j * np.einsum("xs,xmn,x->mns", ba, Rb[*Rorig], np.exp(-1j * np.pi * phase))
+        if normalized:
+            np.einsum("nns->ns", rC[0, 0, 0])[:] += R0
         return rC
+
+    def calc_sclog(self, maxIterations=20):
+        return self._calc_clog(maxIterations, normalized=False)
+
+    def calc_ssslog(self, maxIterations=20):
+        return self._calc_clog(maxIterations, normalized=True)
 
     def calc_clogFull(self, maxIterations=20):
         # Eqs. (41) - (45)
